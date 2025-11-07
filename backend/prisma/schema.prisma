@@ -1,0 +1,537 @@
+// Prisma schema for WagerVS prediction platform
+
+generator client {
+  provider = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// ADMIN MODELS
+// ============================================================
+
+model AdminUser {
+  id           Bytes     @id @default(dbgenerated("(uuid_to_bin(uuid()))")) @db.Binary(16)
+  username     String    @unique @db.VarChar(50)
+  passwordHash String    @map("password_hash") @db.VarChar(255)
+  role         AdminRole @default(moderator)
+  isActive     Boolean   @default(true) @map("is_active")
+  lastLogin    DateTime? @map("last_login") @db.DateTime
+  createdAt    DateTime  @default(now()) @map("created_at") @db.DateTime
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.DateTime
+
+  // Relations
+  auditLogs        AuditLog[]
+  eventsCreated    Event[]           @relation("AdminCreatedEvents")
+  eventsApproved   Event[]           @relation("AdminApprovedEvents")
+  payoutsProcessed EventPayout[]
+  submissionsReviewed EventSubmission[]
+  
+  @@map("admin_users")
+}
+
+model AuditLog {
+  id          Bytes    @id @default(dbgenerated("(uuid_to_bin(uuid()))")) @db.Binary(16)
+  adminId     Bytes?   @map("admin_id") @db.Binary(16)
+  actionType  String   @map("action_type") @db.VarChar(100)
+  targetTable String?  @map("target_table") @db.VarChar(50)
+  targetId    Bytes?   @map("target_id") @db.Binary(16)
+  oldValue    Json?    @map("old_value")
+  newValue    Json?    @map("new_value")
+  description String?  @db.Text
+  ipAddress   String?  @map("ip_address") @db.VarChar(45)
+  createdAt   DateTime @default(now()) @map("created_at") @db.DateTime
+
+  // Relations
+  admin AdminUser? @relation(fields: [adminId], references: [id], onDelete: SetNull)
+
+  @@index([adminId], map: "idx_admin")
+  @@index([actionType], map: "idx_action")
+  @@map("audit_logs")
+}
+
+// ============================================================
+// USER MODELS
+// ============================================================
+
+model User {
+  id                   Bytes     @id @default(dbgenerated("(uuid_to_bin(uuid()))")) @db.Binary(16)
+  username             String?   @unique @db.VarChar(50)
+  email                String?   @unique @db.VarChar(255)
+  avatarUrl            String?   @map("avatar_url") @db.VarChar(500)
+  levelBadgeUrl        String?   @map("level_badge_url") @db.VarChar(500)
+  level                Int       @default(1)
+  xp                   BigInt    @default(0)
+  isWhitelisted        Boolean   @default(false) @map("is_whitelisted")
+  isActive             Boolean   @default(true) @map("is_active")
+  eventsSubmitted      Int       @default(0) @map("events_submitted")
+  eventsApproved       Int       @default(0) @map("events_approved")
+  totalCommissionUsd   Decimal   @default(0) @map("total_commission_usd") @db.Decimal(12, 2)
+  anonBadgeId          String?   @unique @map("anon_badge_id") @db.VarChar(100)
+  createdAt            DateTime  @default(now()) @map("created_at") @db.DateTime
+  updatedAt            DateTime  @updatedAt @map("updated_at") @db.DateTime
+  lastLogin            DateTime? @map("last_login") @db.DateTime
+
+  // Relations
+  authMethods      UserAuth[]
+  wallets          UserWallet[]
+  points           UserPoint[]
+  ledgerEntries    Ledger[]
+  bets             EventBet[]
+  payouts          EventPayout[]
+  pointLedger      PointLedger[]
+  cashOutRequests  CashOutRequest[]
+  referralsGiven   Referral[]        @relation("Referrer")
+  referralsReceived Referral[]       @relation("Referred")
+  creatorRevenue   CreatorRevenue[]
+  eventsCreated    Event[]           @relation("UserCreatedEvents")
+  eventSubmissions EventSubmission[]
+  prizeResults     PrizeResult[]
+
+  @@index([email], map: "idx_email")
+  @@index([username], map: "idx_username")
+  @@map("users")
+}
+
+model UserAuth {
+  id             Bytes        @id @default(dbgenerated("(uuid_to_bin(uuid()))")) @db.Binary(16)
+  userId         Bytes        @map("user_id") @db.Binary(16)
+  authType       AuthType     @map("auth_type")
+  authIdentifier String       @map("auth_identifier") @db.VarChar(255)
+  passwordHash   String?      @map("password_hash") @db.VarChar(255)
+  isVerified     Boolean      @default(false) @map("is_verified")
+  createdAt      DateTime     @default(now()) @map("created_at") @db.DateTime
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, authType], map: "uniq_user_type")
+  @@index([authIdentifier], map: "idx_identifier")
+  @@map("user_auth")
+}
+
+model UserWallet {
+  id            Bytes      @id @default(dbgenerated("(uuid_to_bin(uuid()))")) @db.Binary(16)
+  userId        Bytes      @map("user_id") @db.Binary(16)
+  chain         ChainType
+  walletAddress String     @map("wallet_address") @db.VarChar(100)
+  createdAt     DateTime   @default(now()) @map("created_at") @db.DateTime
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, chain], map: "uniq_user_chain")
+  @@index([walletAddress], map: "idx_address")
+  @@map("user_wallets")
+}
+
+model UserPoint {
+  id        Bytes         @id @default(dbgenerated("(uuid_to_bin(uuid()))")) @db.Binary(16)
+  userId    Bytes         @map("user_id") @db.Binary(16)
+  source    PointSource
+  pointType PointType     @map("point_type")
+  amount    BigInt        @default(0)
+  updatedAt DateTime      @updatedAt @map("updated_at") @db.DateTime
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, source, pointType], map: "uniq_user_source_type")
+  @@map("user_points")
+}
+
+// ============================================================
+// LEDGER & TRANSACTIONS
+// ============================================================
+
+model Ledger {
+  id              Bytes             @id @default(dbgenerated("(uuid_to_bin(uuid()))")) @db.Binary(16)
+  userId          Bytes             @map("user_id") @db.Binary(16)
+  currency        CurrencyType
+  amount          Decimal           @db.Decimal(18, 8)
+  balanceBefore   Decimal           @map("balance_before") @db.Decimal(18, 8)
+  balanceAfter    Decimal           @map("balance_after") @db.Decimal(18, 8)
+  transactionType TransactionType   @map("transaction_type")
+  referenceType   String?           @map("reference_type") @db.VarChar(50)
+  referenceId     Bytes?            @map("reference_id") @db.Binary(16)
+  description     String?           @db.Text
+  createdAt       DateTime          @default(now()) @map("created_at") @db.DateTime
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, currency], map: "idx_user_currency")
+  @@index([transactionType], map: "idx_type")
+  @@map("ledger")
+}
+
+model PointLedger {
+  id            Bytes    @id @default(dbgenerated("(uuid_to_bin(uuid()))")) @db.Binary(16)
+  userId        Bytes    @map("user_id") @db.Binary(16)
+  pointsChange  BigInt   @map("points_change")
+  balanceBefore BigInt   @map("balance_before")
+  balanceAfter  BigInt   @map("balance_after")
+  eventType     String   @map("event_type") @db.VarChar(50)
+  referenceType String?  @map("reference_type") @db.VarChar(50)
+  referenceId   Bytes?   @map("reference_id") @db.Binary(16)
+  description   String?  @db.Text
+  createdAt     DateTime @default(now()) @map("created_at") @db.DateTime
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("point_ledger")
+}
+
+// ============================================================
+// CATEGORY & EVENT MODELS
+// ============================================================
+
+model Category {
+  id           Bytes    @id @default(dbgenerated("(uuid_to_bin(uuid()))")) @db.Binary(16)
+  name         String   @unique @db.VarChar(100)
+  slug         String   @unique @db.VarChar(100)
+  iconUrl      String?  @map("icon_url") @db.VarChar(500)
+  displayOrder Int      @default(0) @map("display_order")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at") @db.DateTime
+
+  // Relations
+  events           Event[]
+  eventSubmissions EventSubmission[]
+
+  @@map("categories")
+}
+
+model Event {
+  id                 Bytes            @id @default(dbgenerated("(uuid_to_bin(uuid()))")) @db.Binary(16)
+  creatorUserId      Bytes?           @map("creator_user_id") @db.Binary(16)
+  createdByAdminId   Bytes?           @map("created_by_admin_id") @db.Binary(16)
+  name               String           @db.VarChar(255)
+  description        String?          @db.Text
+  categoryId         Bytes            @map("category_id") @db.Binary(16)
+  imageUrl           String?          @map("image_url") @db.VarChar(500)
+  aiPrediction       Json?            @map("ai_prediction")
+  status             EventStatus      @default(draft)
+  winningSide        String?          @map("winning_side") @db.Char(1)
+  lockTime           DateTime?        @map("lock_time") @db.DateTime
+  payoutTime         DateTime?        @map("payout_time") @db.DateTime
+  eventSource        String           @map("event_source") @db.VarChar(50)
+  aiGenerated        Boolean          @default(false) @map("ai_generated")
+  aiModelVersion     String?          @map("ai_model_version") @db.VarChar(20)
+  creatorCommission  Decimal          @default(1.00) @map("creator_commission") @db.Decimal(5, 2)
+  approvalStatus     ApprovalStatus?  @map("approval_status")
+  approvedByAdminId  Bytes?           @map("approved_by_admin_id") @db.Binary(16)
+  approvedAt         DateTime?        @map("approved_at") @db.DateTime
+  rejectionReason    String?          @map("rejection_reason") @db.Text
+  createdAt          DateTime         @default(now()) @map("created_at") @db.DateTime
+  updatedAt          DateTime         @updatedAt @map("updated_at") @db.DateTime
+
+  // Relations
+  category         Category          @relation(fields: [categoryId], references: [id])
+  creatorUser      User?             @relation("UserCreatedEvents", fields: [creatorUserId], references: [id], onDelete: SetNull)
+  createdByAdmin   AdminUser?        @relation("AdminCreatedEvents", fields: [createdByAdminId], references: [id], onDelete: SetNull)
+  approvedByAdmin  AdminUser?        @relation("AdminApprovedEvents", fields: [approvedByAdminId], references: [id])
+  choices          EventChoice[]
+  bets             EventBet[]
+  payouts          EventPayout[]
+  creatorRevenue   CreatorRevenue[]
+
+  @@index([status], map: "idx_status")
+  @@index([lockTime], map: "idx_lock")
+  @@index([categoryId], map: "idx_category")
+  @@map("events")
+}
+
+model EventChoice {
+  id           Bytes   @id @default(dbgenerated("(uuid_to_bin(uuid()))")) @db.Binary(16)
+  eventId      Bytes   @map("event_id") @db.Binary(16)
+  choiceLetter String  @map("choice_letter") @db.Char(1)
+  choiceName   String  @map("choice_name") @db.VarChar(100)
+  totalPool    Decimal @default(0) @map("total_pool") @db.Decimal(18, 8)
+
+  // Relations
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, choiceLetter], map: "uniq_event_letter")
+  @@map("event_choices")
+}
+
+model EventBet {
+  id           Bytes        @id @default(dbgenerated("(uuid_to_bin(uuid()))")) @db.Binary(16)
+  eventId      Bytes        @map("event_id") @db.Binary(16)
+  userId       Bytes        @map("user_id") @db.Binary(16)
+  choiceLetter String       @map("choice_letter") @db.Char(1)
+  amount       Decimal      @db.Decimal(18, 8)
+  status       BetStatus    @default(active)
+  placedAt     DateTime     @default(now()) @map("placed_at") @db.DateTime
+  settledAt    DateTime?    @map("settled_at") @db.DateTime
+
+  // Relations
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId], map: "idx_user")
+  @@map("event_bets")
+}
+
+model EventPayout {
+  id            Bytes         @id @default(dbgenerated("(uuid_to_bin(uuid()))")) @db.Binary(16)
+  eventId       Bytes         @map("event_id") @db.Binary(16)
+  userId        Bytes         @map("user_id") @db.Binary(16)
+  payoutAmount  Decimal       @map("payout_amount") @db.Decimal(18, 8)
+  status        PayoutStatus  @default(pending)
+  processedAt   DateTime?     @map("processed_at") @db.DateTime
+  adminId       Bytes?        @map("admin_id") @db.Binary(16)
+  createdAt     DateTime      @default(now()) @map("created_at") @db.DateTime
+
+  // Relations
+  event Event      @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user  User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  admin AdminUser? @relation(fields: [adminId], references: [id])
+
+  @@map("event_payouts")
+}
+
+model EventSubmission {
+  id                 Bytes              @id @default(dbgenerated("(uuid_to_bin(uuid()))")) @db.Binary(16)
+  userId             Bytes              @map("user_id") @db.Binary(16)
+  eventId            Bytes?             @map("event_id") @db.Binary(16)
+  title              String             @db.VarChar(255)
+  description        String?            @db.Text
+  categoryId         Bytes              @map("category_id") @db.Binary(16)
+  sideAName          String             @map("side_a_name") @db.VarChar(100)
+  sideBName          String             @map("side_b_name") @db.VarChar(100)
+  lockAt             DateTime?          @map("lock_at") @db.DateTime
+  imageUrl           String?            @map("image_url") @db.VarChar(500)
+  status             SubmissionStatus   @default(pending)
+  priority           Int                @default(0)
+  reviewedByAdminId  Bytes?             @map("reviewed_by_admin_id") @db.Binary(16)
+  reviewedAt         DateTime?          @map("reviewed_at") @db.DateTime
+  rejectionReason    String?            @map("rejection_reason") @db.Text
+  adminNotes         String?            @map("admin_notes") @db.Text
+  aiFlag             Json?              @map("ai_flag")
+  submittedAt        DateTime           @default(now()) @map("submitted_at") @db.DateTime
+  updatedAt          DateTime           @updatedAt @map("updated_at") @db.DateTime
+
+  // Relations
+  user            User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category        Category   @relation(fields: [categoryId], references: [id])
+  reviewedByAdmin AdminUser? @relation(fields: [reviewedByAdminId], references: [id])
+
+  @@index([status], map: "idx_status")
+  @@map("event_submissions")
+}
+
+// ============================================================
+// PRIZE & REVENUE MODELS
+// ============================================================
+
+model PrizeCycle {
+  id            Bytes          @id @default(dbgenerated("(uuid_to_bin(uuid()))")) @db.Binary(16)
+  name          String         @db.VarChar(100)
+  prizePoolUsd  Decimal        @default(0) @map("prize_pool_usd") @db.Decimal(12, 2)
+  startDate     DateTime       @map("start_date") @db.DateTime
+  endDate       DateTime       @map("end_date") @db.DateTime
+  status        CycleStatus
+  createdAt     DateTime       @default(now()) @map("created_at") @db.DateTime
+
+  // Relations
+  results PrizeResult[]
+
+  @@map("prize_cycles")
+}
+
+model PrizeResult {
+  id           Bytes      @id @default(dbgenerated("(uuid_to_bin(uuid()))")) @db.Binary(16)
+  cycleId      Bytes      @map("cycle_id") @db.Binary(16)
+  userId       Bytes      @map("user_id") @db.Binary(16)
+  tier         Int
+  sharePercent Decimal    @map("share_percent") @db.Decimal(5, 2)
+  amountUsd    Decimal    @map("amount_usd") @db.Decimal(12, 2)
+  createdAt    DateTime   @default(now()) @map("created_at") @db.DateTime
+
+  // Relations
+  cycle PrizeCycle @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  user  User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("prize_results")
+}
+
+model CreatorRevenue {
+  id          Bytes         @id @default(dbgenerated("(uuid_to_bin(uuid()))")) @db.Binary(16)
+  userId      Bytes         @map("user_id") @db.Binary(16)
+  eventId     Bytes         @map("event_id") @db.Binary(16)
+  rakePercent Decimal       @default(1.00) @map("rake_percent") @db.Decimal(5, 2)
+  revenueUsd  Decimal       @default(0) @map("revenue_usd") @db.Decimal(12, 2)
+  status      RevenueStatus @default(pending)
+  paidAt      DateTime?     @map("paid_at") @db.DateTime
+  createdAt   DateTime      @default(now()) @map("created_at") @db.DateTime
+
+  // Relations
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@map("creator_revenue")
+}
+
+// ============================================================
+// FINANCIAL MODELS
+// ============================================================
+
+model CashOutRequest {
+  id          Bytes           @id @default(dbgenerated("(uuid_to_bin(uuid()))")) @db.Binary(16)
+  userId      Bytes           @map("user_id") @db.Binary(16)
+  amount      Decimal         @db.Decimal(18, 8)
+  currency    CurrencyType
+  method      String          @db.VarChar(50)
+  status      CashOutStatus   @default(pending)
+  requestedAt DateTime        @default(now()) @map("requested_at") @db.DateTime
+  processedAt DateTime?       @map("processed_at") @db.DateTime
+  completedAt DateTime?       @map("completed_at") @db.DateTime
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("cash_out_requests")
+}
+
+model Referral {
+  id              Bytes          @id @default(dbgenerated("(uuid_to_bin(uuid()))")) @db.Binary(16)
+  referrerId      Bytes          @map("referrer_id") @db.Binary(16)
+  referredId      Bytes          @map("referred_id") @db.Binary(16)
+  status          ReferralStatus @default(pending)
+  rewardAmount    Decimal?       @map("reward_amount") @db.Decimal(12, 2)
+  rewardGrantedAt DateTime?      @map("reward_granted_at") @db.DateTime
+  createdAt       DateTime       @default(now()) @map("created_at") @db.DateTime
+
+  // Relations
+  referrer User @relation("Referrer", fields: [referrerId], references: [id])
+  referred User @relation("Referred", fields: [referredId], references: [id])
+
+  @@unique([referrerId, referredId], map: "uniq_referral")
+  @@map("referrals")
+}
+
+// ============================================================
+// ENUMS
+// ============================================================
+
+enum AdminRole {
+  super_admin
+  admin
+  finance
+  moderator
+}
+
+enum AuthType {
+  google
+  solana
+  ethereum
+  password
+  telegram
+  anon
+}
+
+enum ChainType {
+  solana
+  ethereum
+}
+
+enum PointSource {
+  betting
+  event_creation
+  referral
+  early_bet
+  against_ai
+}
+
+enum PointType {
+  lifetime
+  prize_pool
+}
+
+enum CurrencyType {
+  chips
+  usd
+  usdc
+  sol
+  eth
+}
+
+enum TransactionType {
+  deposit
+  chips_buy
+  event_create
+  event_create_ai
+  private_event
+  bet_placed
+  bet_won
+  ai_insight_buy
+  referral_reward
+  prize_won
+  cashout
+}
+
+enum EventStatus {
+  draft
+  pending
+  active
+  locked
+  completed
+  paid_out
+  cancelled
+}
+
+enum ApprovalStatus {
+  pending
+  approved
+  rejected
+}
+
+enum BetStatus {
+  active
+  won
+  lost
+  refunded
+}
+
+enum PayoutStatus {
+  pending
+  completed
+  rejected
+}
+
+enum SubmissionStatus {
+  pending
+  approved
+  rejected
+  requires_changes
+}
+
+enum CycleStatus {
+  upcoming
+  active
+  completed
+}
+
+enum RevenueStatus {
+  pending
+  paid
+}
+
+enum CashOutStatus {
+  pending
+  completed
+  rejected
+}
+
+enum ReferralStatus {
+  pending
+  completed
+}
+
